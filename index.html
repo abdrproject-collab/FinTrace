@@ -4851,9 +4851,11 @@
         }
         
         // --- CONFIGURATION GOOGLE API ---
-        const CLIENT_ID = '816214875024-eef0crh7tm4vuv90jolvctk1qlejrbbp.apps.googleusercontent.com'; //
-        const API_KEY = 'AIzaSyDyHmV-oT5qyZJHTsM5haHENUDWk4mAxik'; //
-        const SCOPES = 'https://www.googleapis.com/auth/drive.appdata'; 
+        const CLIENT_ID = '121105242658-1a88pfqkm6mhii21mmoahb0piul5l72j.apps.googleusercontent.com'; //
+        const API_KEY = 'AIzaSyBvCJtHBsN8UVdzo0bl6cnxp98VMGEBb74'; //
+        const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
+        // PERBAIKAN: Scope diubah ke drive.appdata agar sinkronisasi appDataFolder berhasil
+        const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 
         let tokenClient;
         let gapiInited = false;
