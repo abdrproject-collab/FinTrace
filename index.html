@@ -1087,7 +1087,13 @@
             if (activeTab === 'home') { content.innerHTML = renderHomeHTML(); initHomeJS(); }
             else if (activeTab === 'report') { content.innerHTML = renderReportHTML(); initReportJS(); }
             else if (activeTab === 'manage') { content.innerHTML = renderManageHTML(); }
-            else if (activeTab === 'more') { content.innerHTML = renderMoreHTML(); }
+            else if (activeTab === 'more') { 
+                content.innerHTML = renderMoreHTML(); 
+                // MODIFIKASI: Perbarui label secara instan jika token aktif saat tab dibuka
+                if (typeof updateSyncStatusLabel === 'function') {
+                    updateSyncStatusLabel();
+                }
+            }
             lucide.createIcons();
         }
 
@@ -3090,17 +3096,21 @@
         // 4. MORE TAB (LAINNYA)
         // ==========================================
         function renderMoreHTML() {
+            // MODIFIKASI: Cek kondisi token untuk menentukan teks awal sebelum di-update DOM
+            const statusTeks = googleAccessToken ? "Tersambung" : "Belum Ditautkan";
+
             return `
                 <div class="p-4 space-y-4">
                     <span class="text-xs font-bold text-slate-400">PENGATURAN & UTILITAS</span>
                     <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden divide-y divide-slate-100">
-                        <!-- SISIPKAN TOMBOL BARU INI -->
-                        <button onclick="handleGoogleSyncClick()" class="w-full p-3.5 flex items-center justify-between hover:bg-slate-50 text-left">
-                            <span class="text-xs font-bold flex items-center gap-2">
+                        <!-- SINKRONISASI GOOGLE CLOUD -->
+                        <button onclick="handleGoogleSyncClick()" class="w-full p-3.5 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 text-left">
+                            <span class="text-xs font-bold flex items-center gap-2 text-slate-700 dark:text-slate-200">
                                 <i data-lucide="cloud" class="w-4 h-4 text-slate-500"></i> 
                                 Sinkronisasi Google Cloud
                             </span>
-                            <span id="sync-status-label" class="text-[10px] text-slate-400 font-semibold">Belum Ditautkan</span>
+                            <!-- MODIFIKASI: Variabel statusTeks dimasukkan ke sini -->
+                            <span id="sync-status-label" class="text-[10px] text-slate-400 font-semibold">${statusTeks}</span>
                         </button>
 
                         <button onclick="openSettingsPage()" class="w-full p-3.5 flex items-center justify-between hover:bg-slate-50 text-left">
@@ -4854,18 +4864,25 @@
         const CLIENT_ID = '121105242658-1a88pfqkm6mhii21mmoahb0piul5l72j.apps.googleusercontent.com'; //
         const API_KEY = 'AIzaSyBvCJtHBsN8UVdzo0bl6cnxp98VMGEBb74'; //
         const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-        // PERBAIKAN: Scope diubah ke drive.appdata agar sinkronisasi appDataFolder berhasil
         const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 
         let tokenClient;
         let gapiInited = false;
         let gisInited = false;
-        let googleAccessToken = null;
+        
+        // PERBAIKAN: Ambil token yang tersimpan di session agar tidak hilang saat pindah tab
+        let googleAccessToken = sessionStorage.getItem('google_access_token') || null;
 
         function initGoogleAPI() {
             gapi.load('client', async () => {
                 await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'] });
                 gapiInited = true;
+                // Jika token sudah ada dari sesi sebelumnya, jalankan sinkronisasi/unduh otomatis
+                if (googleAccessToken) {
+                    gapi.client.setToken({ access_token: googleAccessToken });
+                    updateSyncStatusLabel();
+                    unduhDataDariAwan();
+                }
             });
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: CLIENT_ID,
@@ -4873,20 +4890,26 @@
                 callback: (tokenResponse) => {
                     if (tokenResponse.error !== undefined) return;
                     googleAccessToken = tokenResponse.access_token;
-                    const statusLabel = document.getElementById('sync-status-label');
-                    if (statusLabel) statusLabel.textContent = "Tersambung";
+                    sessionStorage.setItem('google_access_token', googleAccessToken); // Simpan token ke session
+                    updateSyncStatusLabel();
                     showToast("Akun Google berhasil ditautkan!");
-                    jalankanSinkronisasiAwan();
+                    unduhDataDariAwan(); // Ambil data dari cloud dulu saat pertama kali tersambung
                 },
             });
             gisInited = true;
         }
 
+        // Fungsi pembantu agar label status tetap konsisten
+        function updateSyncStatusLabel() {
+            setTimeout(() => {
+                const statusLabel = document.getElementById('sync-status-label');
+                if (statusLabel && googleAccessToken) statusLabel.textContent = "Tersambung";
+            }, 100);
+        }
+
         function handleGoogleSyncClick() {
-            // Jika gapi atau google identity belum termuat di browser
             if (typeof gapi === 'undefined' || typeof google === 'undefined') { 
                 showToast("Sedang menghubungkan ke server Google, pastikan internet aktif..."); 
-                // Coba inisialisasi ulang secara paksa
                 try { initGoogleAPI(); } catch(e) {}
                 return; 
             }
@@ -4899,10 +4922,45 @@
             tokenClient.requestAccessToken({ prompt: 'consent' });
         }
 
+        // FUNGSI BARU: Mengunduh data dari Google Drive ke Perangkat Baru
+        async function unduhDataDariAwan() {
+            if (!googleAccessToken) return;
+            try {
+                const response = await gapi.client.drive.files.list({
+                    spaces: 'appDataFolder',
+                    fields: 'files(id, name)',
+                    pageSize: 1
+                });
+                const files = response.result.files;
+                if (files.length > 0) {
+                    const fileId = files[0].id;
+                    // Ambil konten file json dari Google Drive
+                    const resData = await gapi.client.drive.files.get({
+                        fileId: fileId,
+                        alt: 'media'
+                    });
+                    
+                    if (resData.result) {
+                        // Bandingkan atau langsung timpa localStorage jika data cloud lebih baru/ada
+                        localStorage.setItem('fintrace_state', JSON.stringify(resData.result));
+                        // Muat ulang data ke aplikasi internal Anda
+                        if (typeof loadDataFromLocalStorage === 'function') {
+                            loadDataFromLocalStorage();
+                            if (typeof updateHeaderDetails === 'function') updateHeaderDetails();
+                        }
+                        showToast("Data dari cloud berhasil dimuat ke perangkat ini!");
+                    }
+                } else {
+                    // Jika file di cloud belum ada, lakukan upload pertama kali
+                    jalankanSinkronisasiAwan();
+                }
+            } catch (err) {
+                console.error("Gagal mengunduh data cloud:", err);
+            }
+        }
+
         async function jalankanSinkronisasiAwan() {
             if (!googleAccessToken) return;
-            showToast("Menyinkronkan data ke cloud...");
-    
             try {
                 const response = await gapi.client.drive.files.list({
                     spaces: 'appDataFolder',
@@ -4934,22 +4992,22 @@
                     });
                 }
                 showToast("Data aman tersinkronisasi!");
-                // Injeksi log secara manual agar tidak memicu pemanggilan ulang saveDataToLocalStorage()
                 const now = new Date();
-                state.actionLogs.unshift({ 
-                    id: 'log-' + Date.now(), 
-                    action: "Sinkronisasi otomatis ke Google Cloud berhasil.", 
-                    timestamp: now.toISOString(), 
-                    accountId: state.activeAccountId 
-                });
-                originalSaveData(); 
+                if (window.state && state.actionLogs) {
+                    state.actionLogs.unshift({ 
+                        id: 'log-' + Date.now(), 
+                        action: "Sinkronisasi otomatis ke Google Cloud berhasil.", 
+                        timestamp: now.toISOString(), 
+                        accountId: state.activeAccountId 
+                    });
+                }
+                if (typeof originalSaveData === 'function') originalSaveData(); 
             } catch (err) {
                 console.error(err);
                 showToast("Gagal sinkronisasi data cloud.");
             }
         }
 
-        // Intersepsi otomatis agar setiap kali aplikasi save data lokal, cloud juga ikut terupdate
         const originalSaveData = saveDataToLocalStorage;
         saveDataToLocalStorage = function() {
             originalSaveData();
